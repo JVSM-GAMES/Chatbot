@@ -2,19 +2,28 @@ import * as baileys from "@whiskeysockets/baileys";
 import express from "express";
 import qrcode from "qrcode";
 import Pino from "pino";
-import fs from "fs";
 
-const { makeWASocket, useMultiFileAuthState, DisconnectReason } = baileys;
+const { makeWASocket, DisconnectReason, initAuthCreds, BufferJSON } = baileys;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 let sock = null;
 let qrCodeData = null;
-const AUTH_FOLDER = "baileys_auth_info";
+let authState = { creds: initAuthCreds(), keys: {} }; // auth em memória
 let clients = [];
 let reconnectTimeout = null;
 let isStarting = false;
+
+function getAuthState() {
+  return {
+    state: authState,
+    saveCreds: async () => {
+      // Aqui não salva em arquivo, apenas mantém em memória
+      console.log("💾 Credenciais atualizadas em memória.");
+    },
+  };
+}
 
 async function startSock(forceNewAuth = false) {
   if (isStarting) return;
@@ -25,12 +34,12 @@ async function startSock(forceNewAuth = false) {
     return; // já conectado
   }
 
-  if (forceNewAuth && fs.existsSync(AUTH_FOLDER)) {
-    fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
-    console.log("🗑️ Credenciais antigas removidas.");
+  if (forceNewAuth) {
+    authState = { creds: initAuthCreds(), keys: {} }; // limpa credenciais
+    console.log("🗑️ Credenciais antigas removidas (memória).");
   }
 
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
+  const { state, saveCreds } = getAuthState();
 
   sock = makeWASocket({
     logger: Pino({ level: "silent" }),
@@ -43,21 +52,21 @@ async function startSock(forceNewAuth = false) {
 
     if (qr) {
       qrCodeData = await qrcode.toDataURL(qr);
-      notifyClients(qrCodeData);
+      notifyClients(qrCodeData, "Escaneie o QR para conectar");
       console.log("📲 Novo QR gerado!");
     }
 
     if (connection === "open") {
       console.log("✅ Conectado ao WhatsApp!");
       qrCodeData = null;
-      notifyClients(null);
+      notifyClients(null, "✅ Conectado ao WhatsApp!");
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
     }
 
     if (connection === "close") {
       const shouldReconnect =
         lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut &&
-        fs.existsSync(AUTH_FOLDER);
+        authState?.creds?.me; // só reconecta se já tinha sessão válida
 
       console.log("❌ Conexão fechada. Reconectar:", shouldReconnect);
 
@@ -65,9 +74,9 @@ async function startSock(forceNewAuth = false) {
         if (reconnectTimeout) clearTimeout(reconnectTimeout);
         reconnectTimeout = setTimeout(() => startSock(), 5000);
       } else {
-        console.log("⚠️ Sessão encerrada ou inválida. Aguardando novo QR...");
+        console.log("⚠️ Sessão inválida ou logout. Aguardando novo QR...");
         qrCodeData = null;
-        notifyClients(null);
+        notifyClients(null, "Sessão caiu (Render pode ter hibernado). Escaneie o novo QR.");
       }
     }
   });
@@ -76,26 +85,23 @@ async function startSock(forceNewAuth = false) {
   isStarting = false;
 }
 
-function notifyClients(qr) {
+// Envia QR + status via SSE
+function notifyClients(qr, statusMsg) {
   clients.forEach((res) => {
-    res.write(`data: ${JSON.stringify({ qr })}\n\n`);
+    res.write(`data: ${JSON.stringify({ qr, status: statusMsg })}\n\n`);
   });
 }
 
-// Página principal
-app.get("/", (req, res) => {
-  res.redirect("/qr");
-});
-
-// Página com QR dinâmico
+// Página QR dinâmica
 app.get("/qr", (req, res) => {
   res.send(`
     <html>
       <head><title>QR Code WhatsApp</title></head>
       <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
-        <h2 id="status">Aguardando QR...</h2>
+        <h2 id="status">Carregando...</h2>
         <img id="qr" style="width:300px; margin-top:20px;" />
-        <a href="/" style="margin-top:20px;">Voltar</a>
+        <button onclick="fetch('/new-qr').then(()=>alert('Novo QR solicitado'))" 
+                style="margin-top:20px;padding:10px 20px;">Gerar novo QR</button>
         <script>
           const qrImg = document.getElementById('qr');
           const statusText = document.getElementById('status');
@@ -106,11 +112,10 @@ app.get("/qr", (req, res) => {
             if (data.qr) {
               qrImg.src = data.qr;
               qrImg.style.display = "block";
-              statusText.textContent = "Escaneie o QR para conectar";
             } else {
               qrImg.style.display = "none";
-              statusText.textContent = "✅ Conectado ao WhatsApp!";
             }
+            statusText.textContent = data.status || "";
           };
         </script>
       </body>
@@ -128,17 +133,13 @@ app.get("/events", (req, res) => {
   clients.push(res);
   console.log("📡 Novo cliente SSE conectado.");
 
-  // Se já temos QR, envia imediatamente
-  if (qrCodeData) {
-    res.write(`data: ${JSON.stringify({ qr: qrCodeData })}\n\n`);
-  }
-
   req.on("close", () => {
     clients = clients.filter((client) => client !== res);
     console.log("❌ Cliente SSE desconectado.");
   });
 });
 
+// Rota para desconectar
 app.get("/disconnect", async (req, res) => {
   if (sock) {
     await sock.logout();
@@ -147,6 +148,12 @@ app.get("/disconnect", async (req, res) => {
     startSock(true); // força gerar novo QR
   }
   res.send("Desconectado!");
+});
+
+// Rota para gerar novo QR manualmente
+app.get("/new-qr", (req, res) => {
+  startSock(true);
+  res.send("Novo QR solicitado.");
 });
 
 // Inicia servidor
