@@ -1,126 +1,35 @@
 import express from 'express'
 import Pino from 'pino'
+import fs from 'fs'
 import * as baileys from '@whiskeysockets/baileys'
 import qrcode from 'qrcode'
 import { Boom } from '@hapi/boom'
-import fs from 'fs'
 
 const { makeWASocket, DisconnectReason, fetchLatestBaileysVersion, useMultiFileAuthState } = baileys
-
 const logger = Pino({ level: process.env.LOG_LEVEL || 'info' })
 const app = express()
+const PORT = process.env.PORT || 3000
 
-// ------------------ HTTP SERVER ------------------
+// Carregar menus do JSON
+const menus = JSON.parse(fs.readFileSync('./menus_Chatbot.json', 'utf-8'))
+
 let latestQr = null
+const sessions = {} // { jid: { menu: 'Inicio', lastActive: timestamp, warned: false, timeout: setTimeout } }
 
 app.get('/', (_, res) => res.send('ok'))
-app.get('/ping', (_, res) => res.json({ ok: true, ts: Date.now() }))
 app.get('/qr', (_, res) => {
   if (latestQr) {
-    res.send(`
-      <html>
-        <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;">
-          <h2>Escaneie o QR no WhatsApp > Dispositivos conectados</h2>
-          <img src="${latestQr}" style="width:300px;height:300px;" />
-        </body>
-      </html>
-    `)
+    res.send(`<html><body style="display:flex;justify-content:center;align-items:center;height:100vh;flex-direction:column;">
+      <h2>Escaneie o QR abaixo:</h2>
+      <img src="${latestQr}" style="width:300px;height:300px;" />
+    </body></html>`)
   } else {
-    res.send('QR ainda não gerado ou já autenticado.')
+    res.send('Nenhum QR disponível ou já conectado.')
   }
 })
 
-const PORT = process.env.PORT || 3000
 app.listen(PORT, () => logger.info({ PORT }, 'HTTP server online'))
 
-// ------------------ CARREGAR MENUS ------------------
-const menus = JSON.parse(fs.readFileSync('./menus_Chatbot.json', 'utf8'))
-const MAIN_MENU = 'Inicio' // menu raiz
-
-// ------------------ CONTROLE DE SESSÕES ------------------
-const sessions = {} // { jid: { menu: string, warnTimeout, resetTimeout, locked: boolean } }
-const WARN_TIME = 5 * 60 * 1000 // 5 min
-const RESET_TIME = 10 * 60 * 1000 // 10 min
-
-function resetSession(jid) {
-  sessions[jid] = { menu: MAIN_MENU, warnTimeout: null, resetTimeout: null, locked: false }
-}
-
-async function setInactivityTimers(jid, sock) {
-  const session = sessions[jid]
-  if (session.warnTimeout) clearTimeout(session.warnTimeout)
-  if (session.resetTimeout) clearTimeout(session.resetTimeout)
-
-  session.warnTimeout = setTimeout(async () => {
-    await sock.sendMessage(jid, { text: '*Aviso:* sua sessão será reiniciada em 5 minutos se não houver interação.' })
-    logger.info({ jid }, 'Aviso de inatividade enviado')
-  }, WARN_TIME)
-
-  session.resetTimeout = setTimeout(async () => {
-    resetSession(jid)
-    await sock.sendMessage(jid, { text: '*Sessão expirada por inatividade. Voltando ao menu inicial.*\n\n' + menus[MAIN_MENU].texto })
-    logger.info({ jid }, 'Sessão reiniciada por inatividade')
-  }, RESET_TIME)
-}
-
-// ------------------ HELPERS ------------------
-const getText = (msg) => {
-  const m = msg.message
-  if (!m) return ''
-  if (m.conversation) return m.conversation
-  if (m.extendedTextMessage) return m.extendedTextMessage.text || ''
-  if (m.imageMessage) return m.imageMessage.caption || ''
-  if (m.videoMessage) return m.videoMessage.caption || ''
-  if (m.ephemeralMessage) return getText({ message: m.ephemeralMessage.message })
-  if (m.viewOnceMessage) return getText({ message: m.viewOnceMessage.message })
-  return ''
-}
-
-async function handleMenuInput(jid, text, sock) {
-  const session = sessions[jid]
-  const currentMenu = menus[session.menu]
-
-  // Reinício manual
-  if (text === '0' || text.toLowerCase() === 'inicio') {
-    resetSession(jid)
-    await sock.sendMessage(jid, { text: menus[MAIN_MENU].texto })
-    return
-  }
-
-  // Se locked, não responder (esperando humano)
-  if (session.locked) {
-    await sock.sendMessage(jid, { text: '⚠ Atendimento humano em andamento. Envie "0" para voltar ao menu inicial.' })
-    return
-  }
-
-  const option = currentMenu.opcoes[text]
-  if (!option) {
-    await sock.sendMessage(jid, { text: '❌ Opção inválida. Tente novamente.\n\n' + currentMenu.texto })
-    return
-  }
-
-  // Se ação é mudar de menu
-  if (option.tipo === 'menu') {
-    session.menu = option.destino
-    await sock.sendMessage(jid, { text: menus[option.destino].texto })
-    return
-  }
-
-  // Se ação é resposta
-  if (option.tipo === 'resposta') {
-    await sock.sendMessage(jid, { text: option.texto })
-    return
-  }
-
-  // Se non-response → trava bot
-  if (option.tipo === 'non-response') {
-    session.locked = true
-    await sock.sendMessage(jid, { text: option.texto + '\n\n⚠ Agora você está em atendimento humano. Envie "0" para voltar ao menu inicial.' })
-    return
-  }
-}
-
-// ------------------ BOT ------------------
 async function startWA() {
   const { state, saveCreds } = await useMultiFileAuthState('./auth_info')
   const { version } = await fetchLatestBaileysVersion()
@@ -134,20 +43,16 @@ async function startWA() {
 
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update
-    if (qr) {
-      latestQr = await qrcode.toDataURL(qr)
-      logger.info('QR atualizado. Acesse /qr para escanear.')
-    }
+    if (qr) latestQr = await qrcode.toDataURL(qr)
+
     if (connection === 'close') {
       const code = new Boom(lastDisconnect?.error)?.output?.statusCode
-      if (code !== DisconnectReason.loggedOut) {
-        setTimeout(startWA, 2000)
-      } else {
-        logger.error('Sessão deslogada. Apague ./auth_info e pareie novamente.')
-      }
+      const shouldReconnect = code !== DisconnectReason.loggedOut
+      logger.warn({ code }, 'Conexão fechada')
+      if (shouldReconnect) setTimeout(startWA, 2000)
     } else if (connection === 'open') {
       latestQr = null
-      logger.info('Conectado ao WhatsApp ✅')
+      logger.info('✅ Conectado ao WhatsApp')
     }
   })
 
@@ -156,17 +61,58 @@ async function startWA() {
   sock.ev.on('messages.upsert', async ({ messages }) => {
     for (const msg of messages) {
       if (!msg.message || msg.key.fromMe) continue
-      const jid = msg.key.remoteJid || ''
-      if (!jid.endsWith('@s.whatsapp.net')) continue
+      const jid = msg.key.remoteJid
+      const text = (msg.message.conversation || msg.message.extendedTextMessage?.text || '').trim()
 
-      const text = getText(msg).trim()
-      if (!sessions[jid]) resetSession(jid)
+      if (!sessions[jid]) {
+        sessions[jid] = { menu: 'Inicio', lastActive: Date.now(), warned: false }
+        await sock.sendMessage(jid, { text: menus.Inicio.texto })
+        setInactivityTimeout(jid, sock)
+        continue
+      }
 
-      setInactivityTimers(jid, sock)
+      sessions[jid].lastActive = Date.now()
+      sessions[jid].warned = false
+      clearTimeout(sessions[jid].timeout)
+      setInactivityTimeout(jid, sock)
 
-      await handleMenuInput(jid, text, sock)
+      if (text === '0' || text.toLowerCase() === 'inicio') {
+        sessions[jid].menu = 'Inicio'
+        await sock.sendMessage(jid, { text: menus.Inicio.texto })
+        continue
+      }
+
+      const currentMenu = menus[sessions[jid].menu]
+      const option = currentMenu.opcoes[text]
+
+      if (!option) {
+        await sock.sendMessage(jid, { text: 'Opção inválida. Digite um número válido ou 0 para voltar ao menu inicial.' })
+        continue
+      }
+
+      if (option.tipo === 'menu') {
+        sessions[jid].menu = option.destino
+        await sock.sendMessage(jid, { text: menus[option.destino].texto })
+      } else if (option.tipo === 'resposta') {
+        await sock.sendMessage(jid, { text: option.texto })
+        if (option['non-response']) delete sessions[jid] // encerra atendimento automático
+      }
     }
   })
+}
+
+function setInactivityTimeout(jid, sock) {
+  sessions[jid].timeout = setTimeout(async () => {
+    const timeSinceLast = Date.now() - sessions[jid].lastActive
+    if (timeSinceLast >= 5 * 60 * 1000 && !sessions[jid].warned) {
+      sessions[jid].warned = true
+      await sock.sendMessage(jid, { text: '⚠️ Você está inativo há um tempo. A sessão será reiniciada em 5 minutos se não houver resposta.' })
+      setInactivityTimeout(jid, sock)
+    } else if (sessions[jid].warned && timeSinceLast >= 10 * 60 * 1000) {
+      delete sessions[jid]
+      await sock.sendMessage(jid, { text: '⏳ Sessão reiniciada por inatividade. Digite qualquer coisa para voltar ao menu inicial.' })
+    }
+  }, 5 * 60 * 1000)
 }
 
 startWA().catch(err => logger.error(err, 'Erro fatal'))
