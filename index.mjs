@@ -1,19 +1,23 @@
-import * as baileys from "@whiskeysockets/baileys"
-import express from "express"
-import qrcode from "qrcode"
-import Pino from "pino"
+import * as baileys from "@whiskeysockets/baileys";
+import express from "express";
+import qrcode from "qrcode";
+import Pino from "pino";
 
-const { makeWASocket, useMultiFileAuthState, DisconnectReason } = baileys
+const { makeWASocket, useMultiFileAuthState, DisconnectReason } = baileys;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-let sock;
+let sock = null;
 let qrCodeData = null;
 let reconnectAttempts = 0;
 const MAX_RECONNECT = 7;
+let reconnectTimeout = null;
 
+// Inicia o socket
 async function startSock() {
+  if (sock?.ws?.readyState === 1) return; // Já conectado
+
   const { state, saveCreds } = await useMultiFileAuthState("baileys_auth_info");
 
   sock = makeWASocket({
@@ -27,13 +31,15 @@ async function startSock() {
 
     if (qr) {
       qrCodeData = await qrcode.toDataURL(qr);
-      reconnectAttempts = 0; // reset ao gerar novo qr
+      reconnectAttempts = 0;
+      console.log("📲 Novo QR gerado!");
     }
 
     if (connection === "open") {
       console.log("✅ Conectado ao WhatsApp!");
       qrCodeData = null;
       reconnectAttempts = 0;
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
     }
 
     if (connection === "close") {
@@ -46,12 +52,12 @@ async function startSock() {
         reconnectAttempts++;
         if (reconnectAttempts <= MAX_RECONNECT) {
           console.log(`🔄 Tentando reconectar... (${reconnectAttempts}/${MAX_RECONNECT})`);
-          startSock();
+          reconnectTimeout = setTimeout(() => startSock(), 5000); // aguarda 5s
         } else {
           console.log("⚠️ Muitas tentativas falhadas. Gerando novo QR...");
           qrCodeData = null;
           reconnectAttempts = 0;
-          startSock();
+          reconnectTimeout = setTimeout(() => startSock(), 5000);
         }
       } else {
         console.log("🚫 Sessão encerrada manualmente ou logout detectado.");
@@ -62,31 +68,49 @@ async function startSock() {
   sock.ev.on("creds.update", saveCreds);
 }
 
+// Rotas
 app.get("/", (req, res) => {
-  if (qrCodeData) {
+  if (sock?.ws?.readyState === 1) {
     res.send(`
       <html>
         <head><title>WhatsApp Bot</title></head>
-        <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
-          <h2>Escaneie o QR para conectar</h2>
-          <img src="${qrCodeData}" />
+        <body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
+          <h2>✅ Conectado ao WhatsApp!</h2>
+          <a href="/qr">Ver QR Code</a>
           <button onclick="disconnect()" style="margin-top:20px;padding:10px 20px;">Desconectar</button>
           <script>
             async function disconnect() {
               await fetch('/disconnect');
-              document.querySelector('button').remove(); // remove botão
-              location.reload(); // força recarregar e exibir novo QR
+              alert('Desconectado! Atualize a página para gerar novo QR.');
             }
           </script>
         </body>
       </html>
     `);
   } else {
+    res.redirect("/qr");
+  }
+});
+
+app.get("/qr", (req, res) => {
+  if (qrCodeData) {
     res.send(`
       <html>
-        <head><title>WhatsApp Bot</title></head>
+        <head><title>QR Code WhatsApp</title></head>
+        <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
+          <h2>Escaneie o QR para conectar</h2>
+          <img src="${qrCodeData}" />
+          <a href="/">Voltar</a>
+        </body>
+      </html>
+    `);
+  } else {
+    res.send(`
+      <html>
+        <head><title>QR Code WhatsApp</title></head>
         <body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
-          <h2>✅ Conectado ao WhatsApp!</h2>
+          <h2>✅ Conectado! Nenhum QR disponível.</h2>
+          <a href="/">Voltar</a>
         </body>
       </html>
     `);
@@ -98,13 +122,15 @@ app.get("/disconnect", async (req, res) => {
     await sock.logout();
     qrCodeData = null;
     reconnectAttempts = 0;
-    startSock();
+    console.log("🚪 Logout realizado manualmente.");
   }
   res.send("Desconectado!");
 });
 
+// Inicia servidor
 app.listen(PORT, () => {
   console.log("🌐 Servidor rodando na porta " + PORT);
 });
 
+// Inicia socket
 startSock();
