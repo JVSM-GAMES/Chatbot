@@ -3,19 +3,18 @@ import Pino from 'pino'
 import * as baileys from '@whiskeysockets/baileys'
 import qrcode from 'qrcode'
 import { Boom } from '@hapi/boom'
+import fs from 'fs'
 
 const { makeWASocket, DisconnectReason, fetchLatestBaileysVersion, useMultiFileAuthState } = baileys
 
 const logger = Pino({ level: process.env.LOG_LEVEL || 'info' })
 const app = express()
 
+// ------------------ HTTP SERVER ------------------
 let latestQr = null
 
-// Endpoint raiz
 app.get('/', (_, res) => res.send('ok'))
 app.get('/ping', (_, res) => res.json({ ok: true, ts: Date.now() }))
-
-// QR code
 app.get('/qr', (_, res) => {
   if (latestQr) {
     res.send(`
@@ -34,72 +33,37 @@ app.get('/qr', (_, res) => {
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => logger.info({ PORT }, 'HTTP server online'))
 
-// ------------------ MENUS ------------------
-const MAIN_MENU = `*Olá, seja bem-vindo ao atendimento CG AGRO 🌿*
-
-Qual tipo de produto você está procurando hoje?
-
-*Digite o número da opção desejada:*
-1 - RAÇÕES
-2 - SEMENTES
-3 - MEDICAMENTOS VETERINÁRIOS
-4 - COCHO, TAMBOR E CAIXA D'ÁGUA
-5 - EQUIPAMENTOS EM GERAL
-6 - OUTROS
-0 - Voltar ao menu inicial`
-
-const SUBMENUS = {
-  1: `*RAÇÕES*
-1. Ração para Bovinos
-2. Ração para Suínos
-0. Voltar ao menu inicial`,
-  2: `*SEMENTES*
-1. Milho
-2. Soja
-0. Voltar ao menu inicial`,
-  3: `*MEDICAMENTOS VETERINÁRIOS*
-1. Antibióticos
-2. Vermífugos
-0. Voltar ao menu inicial`,
-  4: `*COCHO, TAMBOR E CAIXA D'ÁGUA*
-1. Cochos de plástico
-2. Caixas d'água 500L
-0. Voltar ao menu inicial`,
-  5: `*EQUIPAMENTOS EM GERAL*
-1. Pulverizadores
-2. Máquinas agrícolas
-0. Voltar ao menu inicial`,
-  6: `*OUTROS PRODUTOS*
-1. Consultar disponibilidade
-0. Voltar ao menu inicial`
-}
+// ------------------ CARREGAR MENUS ------------------
+const menus = JSON.parse(fs.readFileSync('./menus_Chatbot.json', 'utf8'))
+const MAIN_MENU = 'Inicio' // menu raiz
 
 // ------------------ CONTROLE DE SESSÕES ------------------
-const sessions = {} // { jid: { menu: 'main' | 'submenu', warnTimeout, resetTimeout } }
-const WARN_TIME = 5 * 60 * 1000 // 5 minutos
-const RESET_TIME = 10 * 60 * 1000 // 10 minutos
+const sessions = {} // { jid: { menu: string, warnTimeout, resetTimeout, locked: boolean } }
+const WARN_TIME = 5 * 60 * 1000 // 5 min
+const RESET_TIME = 10 * 60 * 1000 // 10 min
 
 function resetSession(jid) {
-  sessions[jid] = { menu: 'main', warnTimeout: null, resetTimeout: null }
+  sessions[jid] = { menu: MAIN_MENU, warnTimeout: null, resetTimeout: null, locked: false }
 }
 
 async function setInactivityTimers(jid, sock) {
-  if (sessions[jid].warnTimeout) clearTimeout(sessions[jid].warnTimeout)
-  if (sessions[jid].resetTimeout) clearTimeout(sessions[jid].resetTimeout)
+  const session = sessions[jid]
+  if (session.warnTimeout) clearTimeout(session.warnTimeout)
+  if (session.resetTimeout) clearTimeout(session.resetTimeout)
 
-  sessions[jid].warnTimeout = setTimeout(async () => {
+  session.warnTimeout = setTimeout(async () => {
     await sock.sendMessage(jid, { text: '*Aviso:* sua sessão será reiniciada em 5 minutos se não houver interação.' })
     logger.info({ jid }, 'Aviso de inatividade enviado')
   }, WARN_TIME)
 
-  sessions[jid].resetTimeout = setTimeout(async () => {
+  session.resetTimeout = setTimeout(async () => {
     resetSession(jid)
-    await sock.sendMessage(jid, { text: '*Sessão expirada por inatividade. Voltando ao menu inicial.*\n\n' + MAIN_MENU })
+    await sock.sendMessage(jid, { text: '*Sessão expirada por inatividade. Voltando ao menu inicial.*\n\n' + menus[MAIN_MENU].texto })
     logger.info({ jid }, 'Sessão reiniciada por inatividade')
   }, RESET_TIME)
 }
 
-// ------------------ EXTRA ------------------
+// ------------------ HELPERS ------------------
 const getText = (msg) => {
   const m = msg.message
   if (!m) return ''
@@ -110,6 +74,50 @@ const getText = (msg) => {
   if (m.ephemeralMessage) return getText({ message: m.ephemeralMessage.message })
   if (m.viewOnceMessage) return getText({ message: m.viewOnceMessage.message })
   return ''
+}
+
+async function handleMenuInput(jid, text, sock) {
+  const session = sessions[jid]
+  const currentMenu = menus[session.menu]
+
+  // Reinício manual
+  if (text === '0' || text.toLowerCase() === 'inicio') {
+    resetSession(jid)
+    await sock.sendMessage(jid, { text: menus[MAIN_MENU].texto })
+    return
+  }
+
+  // Se locked, não responder (esperando humano)
+  if (session.locked) {
+    await sock.sendMessage(jid, { text: '⚠ Atendimento humano em andamento. Envie "0" para voltar ao menu inicial.' })
+    return
+  }
+
+  const option = currentMenu.opcoes[text]
+  if (!option) {
+    await sock.sendMessage(jid, { text: '❌ Opção inválida. Tente novamente.\n\n' + currentMenu.texto })
+    return
+  }
+
+  // Se ação é mudar de menu
+  if (option.tipo === 'menu') {
+    session.menu = option.destino
+    await sock.sendMessage(jid, { text: menus[option.destino].texto })
+    return
+  }
+
+  // Se ação é resposta
+  if (option.tipo === 'resposta') {
+    await sock.sendMessage(jid, { text: option.texto })
+    return
+  }
+
+  // Se non-response → trava bot
+  if (option.tipo === 'non-response') {
+    session.locked = true
+    await sock.sendMessage(jid, { text: option.texto + '\n\n⚠ Agora você está em atendimento humano. Envie "0" para voltar ao menu inicial.' })
+    return
+  }
 }
 
 // ------------------ BOT ------------------
@@ -152,25 +160,11 @@ async function startWA() {
       if (!jid.endsWith('@s.whatsapp.net')) continue
 
       const text = getText(msg).trim()
-
       if (!sessions[jid]) resetSession(jid)
+
       setInactivityTimers(jid, sock)
 
-      if (sessions[jid].menu === 'main') {
-        if (/^[1-6]$/.test(text)) {
-          sessions[jid].menu = 'submenu'
-          await sock.sendMessage(jid, { text: SUBMENUS[text] || 'Opção inválida' })
-        } else {
-          await sock.sendMessage(jid, { text: MAIN_MENU })
-        }
-      } else if (sessions[jid].menu === 'submenu') {
-        if (text === '0') {
-          resetSession(jid)
-          await sock.sendMessage(jid, { text: MAIN_MENU })
-        } else {
-          await sock.sendMessage(jid, { text: `Você escolheu a opção *${text}*.\n(Exemplo fictício)\n\nDigite 0 para voltar ao menu inicial.` })
-        }
-      }
+      await handleMenuInput(jid, text, sock)
     }
   })
 }
