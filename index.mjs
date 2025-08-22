@@ -1,212 +1,43 @@
-// index.mjs
 import express from 'express'
 import Pino from 'pino'
 import * as baileys from '@whiskeysockets/baileys'
 import qrcode from 'qrcode'
 import { Boom } from '@hapi/boom'
 
-const {
-  makeWASocket,
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  initAuthCreds,
-  BufferJSON
-} = baileys
+const { makeWASocket, DisconnectReason, fetchLatestBaileysVersion, initAuthCreds, BufferJSON } = baileys
 
-// ---------- Logger ----------
 const logger = Pino({ level: process.env.LOG_LEVEL || 'info' })
-
-// ---------- HTTP Server (Render) ----------
 const app = express()
 const PORT = process.env.PORT || 3000
 
+// Variável para armazenar QR code
+let latestQr = null
+
+// Sessões por usuário (para menus)
+const sessions = new Map()
+const MENU_TIMEOUT = 5 * 60 * 1000 // 5 minutos
+
+// HTTP server
 app.get('/', (_, res) => res.send('ok'))
 app.get('/ping', (_, res) => res.json({ ok: true, ts: Date.now() }))
-
-// ---------- Estado global ----------
-let sock = null
-let isConnecting = false
-let reconnectTimer = null
-
-// QR atual em DataURL (para fallback) + controle de SSE
-let latestQrDataUrl = null
-const sseClients = new Set()
-
-// ---------- Auth em MEMÓRIA ----------
-function createMemoryAuth() {
-  // Credenciais base
-  const creds = initAuthCreds()
-
-  // Armazena chaves por tipo em Map<string, any>
-  /** @type {Record<string, Map<string, any>>} */
-  const keys = {}
-
-  return {
-    state: {
-      creds,
-      keys: {
-        get: async (type, ids) => {
-          const map = keys[type] || new Map()
-          const result = {}
-          for (const id of ids) result[id] = map.get(id)
-          return result
-        },
-        set: async (data) => {
-          for (const type of Object.keys(data)) {
-            if (!keys[type]) keys[type] = new Map()
-            const map = keys[type]
-            for (const id of Object.keys(data[type])) {
-              const value = data[type][id]
-              if (value === null || value === undefined) {
-                map.delete(id)
-              } else {
-                map.set(id, value)
-              }
-            }
-          }
-        }
-      }
-    },
-    // Apenas loga — nada é persistido em disco
-    saveCreds: async () => logger.info('Credenciais atualizadas em memória'),
-    // Reset total (para /new-qr ou /disconnect)
-    reset: () => {
-      const fresh = initAuthCreds()
-      // zera mapas
-      for (const k of Object.keys((auth.state.keys))) {
-        // recria Map vazio
-        auth.state.keys[k] = new Map()
-      }
-      // substitui creds
-      Object.assign(auth.state.creds, fresh)
-    }
-  }
-}
-
-// instancia global
-const auth = createMemoryAuth()
-
-// ---------- SSE: eventos de QR ----------
-app.get('/events', (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream')
-  res.setHeader('Cache-Control', 'no-cache')
-  res.setHeader('Connection', 'keep-alive')
-
-  res.write(`event: ping\ndata: "ok"\n\n`) // handshake
-  sseClients.add(res)
-  logger.info('👂 Cliente SSE conectado.')
-
-  // envia QR atual se existir
-  if (latestQrDataUrl) {
-    res.write(`event: qr-update\ndata: ${JSON.stringify({ dataUrl: latestQrDataUrl })}\n\n`)
-  }
-
-  // keep-alive (Render/Proxies costumam fechar se inativo)
-  const keepAlive = setInterval(() => {
-    res.write(`event: ping\ndata: "ok"\n\n`)
-  }, 25000)
-
-  req.on('close', () => {
-    clearInterval(keepAlive)
-    sseClients.delete(res)
-    logger.warn('❌ Cliente SSE desconectado.')
-  })
-})
-
-function broadcastQr(dataUrl) {
-  for (const client of sseClients) {
-    try {
-      client.write(`event: qr-update\ndata: ${JSON.stringify({ dataUrl })}\n\n`)
-    } catch {}
-  }
-}
-
-// ---------- Página /qr (auto-atualiza) ----------
 app.get('/qr', (_, res) => {
-  res.send(`
-  <!doctype html>
-  <html>
-    <head>
-      <meta charset="utf-8" />
-      <title>QR WhatsApp</title>
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <style>
-        body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; background:#0b1020; color:#eaeef9; }
-        .card { background:#131a33; border-radius:20px; padding:28px; box-shadow: 0 10px 30px rgba(0,0,0,.35); width: min(420px, 92vw); text-align:center; }
-        h2 { margin:0 0 16px 0; font-weight:600; letter-spacing:.2px; }
-        #qr { width:320px; height:320px; background:#0b1020; border-radius:12px; display:inline-block; }
-        .row { display:flex; gap:10px; justify-content:center; margin-top:16px; flex-wrap: wrap; }
-        button, a.btn { border:0; background:#3056ff; color:#fff; padding:10px 16px; border-radius:12px; cursor:pointer; text-decoration:none; font-weight:600; }
-        button.secondary, a.secondary { background:#2a355f; }
-        .muted { opacity:.8; font-size:14px; }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <h2>Escaneie o QR no WhatsApp → Dispositivos conectados</h2>
-        <div><img id="qr" alt="Aguardando QR..." src="${latestQrDataUrl ?? ''}"/></div>
-        <div class="row">
-          <a class="btn" href="/new-qr">Gerar novo QR</a>
-          <a class="btn secondary" href="/disconnect">Desconectar</a>
-        </div>
-        <p class="muted" id="status">${latestQrDataUrl ? 'QR pronto ✅' : 'Aguardando QR...'}</p>
-      </div>
-
-      <script>
-        const img = document.getElementById('qr');
-        const status = document.getElementById('status');
-        const sse = new EventSource('/events');
-
-        sse.addEventListener('qr-update', (ev) => {
-          try {
-            const { dataUrl } = JSON.parse(ev.data);
-            if (dataUrl && img.src !== dataUrl) {
-              img.src = dataUrl;
-              status.textContent = 'QR pronto ✅';
-            }
-          } catch (e) {}
-        });
-
-        sse.addEventListener('ping', () => {});
-        sse.onerror = () => { /* silencioso */ };
-      </script>
-    </body>
-  </html>
-  `)
-})
-
-// ---------- Comandos de controle ----------
-app.get('/new-qr', async (_, res) => {
-  try {
-    await resetSessionAndStart(true)
-    res.send('Novo QR solicitado. Abra /qr para escanear.')
-  } catch (e) {
-    res.status(500).send('Falha ao solicitar novo QR.')
+  if (latestQr) {
+    res.send(`
+      <html>
+        <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;">
+          <h2>Escaneie o QR no WhatsApp > Dispositivos conectados</h2>
+          <img src="${latestQr}" style="width:300px;height:300px;" />
+        </body>
+      </html>
+    `)
+  } else {
+    res.send('QR ainda não gerado ou já autenticado.')
   }
 })
 
-app.get('/disconnect', async (_, res) => {
-  try {
-    if (sock) {
-      await sock.logout().catch(() => {})
-      await sock.ws?.close?.()
-      sock = null
-    }
-    // reseta as credenciais e limpa QR
-    auth.reset()
-    latestQrDataUrl = null
-    broadcastQr('') // limpa na UI
-    logger.warn('🚪 Logout realizado. Sessão resetada.')
-    res.send('Desconectado e sessão resetada. Use /new-qr para gerar outro QR.')
-  } catch (e) {
-    res.status(500).send('Falha ao desconectar.')
-  }
-})
+app.listen(PORT, () => logger.info({ PORT }, 'HTTP server online'))
 
-// ---------- Inicialização HTTP ----------
-app.listen(PORT, () => logger.info({ PORT: String(PORT) }, 'HTTP server online'))
-
-// ---------- Utilitário de texto de mensagem ----------
+// Função helper para pegar texto
 const getText = (msg) => {
   const m = msg.message
   if (!m) return ''
@@ -219,40 +50,103 @@ const getText = (msg) => {
   return ''
 }
 
-// ---------- Conexão WA ----------
-async function startWA() {
-  if (isConnecting) return
-  isConnecting = true
+// ----------- MENU DEFINIÇÃO -----------
+class Menu {
+  constructor(title) {
+    this.title = title
+    this.options = {}
+  }
 
+  addOption(number, text, action) {
+    this.options[number] = { text, action }
+    return this
+  }
+
+  getText() {
+    let txt = `*${this.title}*\n\nDigite o número da opção:\n`
+    for (const [num, opt] of Object.entries(this.options)) {
+      txt += `\n${num} - ${opt.text}`
+    }
+    return txt
+  }
+
+  async handleInput(input, jid, sock) {
+    const option = this.options[input]
+    if (!option) {
+      await sock.sendMessage(jid, { text: '❌ Opção inválida. Tente novamente.' })
+      return this
+    }
+    if (option.action instanceof Menu) {
+      return option.action
+    } else if (typeof option.action === 'function') {
+      return await option.action(jid, sock)
+    }
+    return this
+  }
+}
+
+// Menu inicial
+const mainMenu = new Menu('Olá, seja Bem-vindo ao atendimento *CG AGRO* 🌿\n\nQual tipo de produto você está procurando hoje?')
+mainMenu
+  .addOption('1', 'RAÇÕES', makeSubMenu('RAÇÕES'))
+  .addOption('2', 'SEMENTES', makeSubMenu('SEMENTES'))
+  .addOption('3', 'MEDICAMENTOS VETERINÁRIOS', makeSubMenu('MEDICAMENTOS VETERINÁRIOS'))
+  .addOption('4', 'COCHO , TAMBOR E CAIXA D´ÁGUA', makeSubMenu('COCHO, TAMBOR E CAIXA D´ÁGUA'))
+  .addOption('5', 'EQUIPAMENTOS EM GERAL', makeSubMenu('EQUIPAMENTOS EM GERAL'))
+  .addOption('6', 'OUTROS', makeSubMenu('OUTROS'))
+
+function makeSubMenu(title) {
+  const submenu = new Menu(`Você está em *${title}*\nEscolha uma opção:`)
+  submenu
+    .addOption('1', 'Produto A', async (jid, sock) => {
+      await sock.sendMessage(jid, { text: 'Detalhes do Produto A...' })
+      return submenu
+    })
+    .addOption('2', 'Produto B', async (jid, sock) => {
+      await sock.sendMessage(jid, { text: 'Detalhes do Produto B...' })
+      return submenu
+    })
+    .addOption('0', 'Voltar ao Menu Inicial', mainMenu)
+  return submenu
+}
+
+// ---------- SESSION HANDLER ----------
+function getSession(jid) {
+  if (!sessions.has(jid)) {
+    sessions.set(jid, {
+      currentMenu: mainMenu,
+      timeout: null
+    })
+  }
+  return sessions.get(jid)
+}
+
+function resetTimeout(jid) {
+  const session = getSession(jid)
+  if (session.timeout) clearTimeout(session.timeout)
+  session.timeout = setTimeout(() => {
+    session.currentMenu = mainMenu
+    logger.info(`Sessão de ${jid} reiniciada por inatividade.`)
+  }, MENU_TIMEOUT)
+}
+
+// ---------- WHATSAPP CONNECTION ----------
+async function startWA() {
+  const auth = initAuthCreds()
   const { version } = await fetchLatestBaileysVersion()
 
-  // fecha anterior se houver
-  try { await sock?.ws?.close?.() } catch {}
-
-  sock = makeWASocket({
+  const sock = makeWASocket({
     version,
-    auth: auth.state,
+    auth: { creds: auth, keys: baileys.initInMemoryKeyStore() },
     printQRInTerminal: false,
     logger
   })
 
-  sock.ev.on('creds.update', auth.saveCreds)
-
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update
-
     if (qr) {
-      // Gera DataURL para UI e envia via SSE
-      latestQrDataUrl = await qrcode.toDataURL(qr)
-      broadcastQr(latestQrDataUrl)
+      latestQr = await qrcode.toDataURL(qr)
       logger.info('QR atualizado. Acesse /qr para visualizar e escanear.')
-    }
-
-    if (connection === 'open') {
-      latestQrDataUrl = null
-      broadcastQr('') // remove QR da UI
-      logger.info('Conectado ao WhatsApp ✅')
-      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
     }
 
     if (connection === 'close') {
@@ -260,68 +154,39 @@ async function startWA() {
       const shouldReconnect = code !== DisconnectReason.loggedOut
       logger.warn({ code }, 'Conexão fechada')
       if (shouldReconnect) {
-        // Reabre para manter QR “vivo” até parear/conectar
-        scheduleReconnect(3000)
+        setTimeout(startWA, 2000)
       } else {
-        logger.error('Sessão deslogada. Use /new-qr para gerar um novo QR.')
+        logger.error('Sessão encerrada. Reinicie para reconectar.')
       }
+    } else if (connection === 'open') {
+      latestQr = null
+      logger.info('Conectado ao WhatsApp ✅')
     }
   })
 
-  // Pareamento por número (opcional)
-  try {
-    if (!auth.state.creds?.registered && process.env.WA_PHONE_NUMBER) {
-      const pairCode = await sock.requestPairingCode(process.env.WA_PHONE_NUMBER)
-      logger.warn(`Código de pareamento: ${pairCode} (WhatsApp > Dispositivos conectados > "Conectar com número")`)
-    }
-  } catch (e) {
-    logger.error(e, 'Falha ao gerar código de pareamento; use o QR em /qr.')
-  }
-
-  // Bot simples: responde "Bom dia" quando recebe "oi"
   sock.ev.on('messages.upsert', async ({ messages }) => {
     for (const msg of messages) {
-      try {
-        if (!msg.message || msg.key.fromMe) continue
-        const jid = msg.key.remoteJid || ''
-        if (!jid.endsWith('@s.whatsapp.net')) continue
+      if (!msg.message || msg.key.fromMe) continue
+      const jid = msg.key.remoteJid || ''
+      if (!jid.endsWith('@s.whatsapp.net')) continue
 
-        const text = getText(msg).trim().toLowerCase()
-        if (text === 'oi') {
-          await sock.sendMessage(jid, { text: 'Bom dia' }, { quoted: msg })
-          logger.info({ to: jid }, 'Respondi "Bom dia"')
-        }
-      } catch (err) {
-        logger.error(err, 'Erro ao processar mensagem')
+      const text = getText(msg).trim().toLowerCase()
+      const session = getSession(jid)
+
+      if (!text) continue
+
+      resetTimeout(jid)
+
+      // Interpreta a opção do menu
+      const newMenu = await session.currentMenu.handleInput(text, jid, sock)
+      if (newMenu !== session.currentMenu) {
+        session.currentMenu = newMenu
       }
+
+      // Sempre enviar o menu atual após processar input
+      await sock.sendMessage(jid, { text: session.currentMenu.getText() })
     }
   })
-
-  isConnecting = false
 }
 
-function scheduleReconnect(ms) {
-  if (reconnectTimer) return
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null
-    startWA().catch(err => logger.error(err, 'Erro ao reconectar'))
-  }, ms)
-}
-
-async function resetSessionAndStart(forceNew = false) {
-  try {
-    if (sock) {
-      await sock.ws?.close?.()
-      sock = null
-    }
-  } catch {}
-  if (forceNew) {
-    auth.reset()
-    latestQrDataUrl = null
-    broadcastQr('')
-  }
-  await startWA()
-}
-
-// ---------- Start ----------
-startWA().catch(err => logger.error(err, 'Erro fatal ao iniciar'))
+startWA().catch(err => logger.error(err, 'Erro fatal'))
