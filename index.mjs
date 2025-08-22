@@ -2,6 +2,7 @@ import * as baileys from "@whiskeysockets/baileys";
 import express from "express";
 import qrcode from "qrcode";
 import Pino from "pino";
+import fs from "fs";
 
 const { makeWASocket, useMultiFileAuthState, DisconnectReason } = baileys;
 
@@ -11,14 +12,19 @@ const PORT = process.env.PORT || 3000;
 let sock = null;
 let qrCodeData = null;
 let reconnectAttempts = 0;
-const MAX_RECONNECT = 7;
+const MAX_RECONNECT = 3;
 let reconnectTimeout = null;
+const AUTH_FOLDER = "baileys_auth_info";
 
-// Inicia o socket
-async function startSock() {
+async function startSock(forceNewAuth = false) {
   if (sock?.ws?.readyState === 1) return; // Já conectado
 
-  const { state, saveCreds } = await useMultiFileAuthState("baileys_auth_info");
+  if (forceNewAuth && fs.existsSync(AUTH_FOLDER)) {
+    fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
+    console.log("🗑️ Credenciais antigas removidas.");
+  }
+
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER);
 
   sock = makeWASocket({
     logger: Pino({ level: "silent" }),
@@ -52,12 +58,11 @@ async function startSock() {
         reconnectAttempts++;
         if (reconnectAttempts <= MAX_RECONNECT) {
           console.log(`🔄 Tentando reconectar... (${reconnectAttempts}/${MAX_RECONNECT})`);
-          reconnectTimeout = setTimeout(() => startSock(), 5000); // aguarda 5s
-        } else {
-          console.log("⚠️ Muitas tentativas falhadas. Gerando novo QR...");
-          qrCodeData = null;
-          reconnectAttempts = 0;
           reconnectTimeout = setTimeout(() => startSock(), 5000);
+        } else {
+          console.log("⚠️ Muitas tentativas falhadas. Descarta auth e aguardando novo QR...");
+          reconnectAttempts = 0;
+          startSock(true); // força gerar nova sessão
         }
       } else {
         console.log("🚫 Sessão encerrada manualmente ou logout detectado.");
@@ -109,7 +114,7 @@ app.get("/qr", (req, res) => {
       <html>
         <head><title>QR Code WhatsApp</title></head>
         <body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
-          <h2>✅ Conectado! Nenhum QR disponível.</h2>
+          <h2>⌛ Aguardando conexão...</h2>
           <a href="/">Voltar</a>
         </body>
       </html>
@@ -123,6 +128,7 @@ app.get("/disconnect", async (req, res) => {
     qrCodeData = null;
     reconnectAttempts = 0;
     console.log("🚪 Logout realizado manualmente.");
+    startSock(true); // força gerar novo QR após logout
   }
   res.send("Desconectado!");
 });
