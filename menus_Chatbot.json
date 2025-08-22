@@ -1,0 +1,62 @@
+{
+  "Inicio": {
+    "texto": "Olá, seja bem-vindo ao atendimento *CG AGRO* 🌿\n\nQual tipo de produto você está procurando hoje?\n\n*Digite o número da opção desejada:*\n1 - RAÇÕES\n2 - SEMENTES\n3 - MEDICAMENTOS VETERINÁRIOS\n4 - COCHO, TAMBOR E CAIXA D'ÁGUA\n5 - EQUIPAMENTOS EM GERAL\n6 - OUTROS\n0 - Voltar ao menu inicial",
+    "opcoes": {
+      "1": { "tipo": "menu", "destino": "racoes" },
+      "2": { "tipo": "menu", "destino": "sementes" },
+      "3": { "tipo": "menu", "destino": "medicamentos" },
+      "4": { "tipo": "menu", "destino": "cocho" },
+      "5": { "tipo": "menu", "destino": "equipamentos" },
+      "6": { "tipo": "menu", "destino": "outros" }
+    }
+  },
+  "racoes": {
+    "texto": "*Menu Rações*\nEscolha uma das opções:\n1 - Ração para Bovinos\n2 - Ração para Suínos\n3 - Ração para Aves\n0 - Voltar ao menu inicial",
+    "opcoes": {
+      "1": { "tipo": "resposta", "texto": "Ração para Bovinos disponível! Entre em contato com nosso setor comercial para detalhes." },
+      "2": { "tipo": "resposta", "texto": "Ração para Suínos disponível! Entre em contato com nosso setor comercial para detalhes." },
+      "3": { "tipo": "resposta", "texto": "Ração para Aves disponível! Entre em contato com nosso setor comercial para detalhes." },
+      "0": { "tipo": "menu", "destino": "Inicio" }
+    }
+  },
+  "sementes": {
+    "texto": "*Menu Sementes*\nEscolha uma das opções:\n1 - Milho\n2 - Soja\n0 - Voltar ao menu inicial",
+    "opcoes": {
+      "1": { "tipo": "resposta", "texto": "Sementes de Milho disponíveis! Entre em contato para saber mais." },
+      "2": { "tipo": "resposta", "texto": "Sementes de Soja disponíveis! Entre em contato para saber mais." },
+      "0": { "tipo": "menu", "destino": "Inicio" }
+    }
+  },
+  "medicamentos": {
+    "texto": "*Menu Medicamentos Veterinários*\nEscolha uma das opções:\n1 - Antibióticos\n2 - Vermífugos\n0 - Voltar ao menu inicial",
+    "opcoes": {
+      "1": { "tipo": "resposta", "texto": "Antibióticos disponíveis! Consulte nosso setor técnico." },
+      "2": { "tipo": "resposta", "texto": "Vermífugos disponíveis! Consulte nosso setor técnico." },
+      "0": { "tipo": "menu", "destino": "Inicio" }
+    }
+  },
+  "cocho": {
+    "texto": "*Menu Cocho, Tambor e Caixa D'Água*\nEscolha uma das opções:\n1 - Cochos\n2 - Tambores\n3 - Caixas D'Água\n0 - Voltar ao menu inicial",
+    "opcoes": {
+      "1": { "tipo": "resposta", "texto": "Temos Cochos disponíveis! Fale com nossa equipe para saber mais." },
+      "2": { "tipo": "resposta", "texto": "Temos Tambores disponíveis! Fale com nossa equipe para saber mais." },
+      "3": { "tipo": "resposta", "texto": "Temos Caixas D'Água disponíveis! Fale com nossa equipe para saber mais." },
+      "0": { "tipo": "menu", "destino": "Inicio" }
+    }
+  },
+  "equipamentos": {
+    "texto": "*Menu Equipamentos em Geral*\nEscolha uma das opções:\n1 - Pulverizadores\n2 - Máquinas Agrícolas\n0 - Voltar ao menu inicial",
+    "opcoes": {
+      "1": { "tipo": "resposta", "texto": "Pulverizadores disponíveis para pronta entrega!" },
+      "2": { "tipo": "resposta", "texto": "Máquinas Agrícolas disponíveis! Consulte condições." },
+      "0": { "tipo": "menu", "destino": "Inicio" }
+    }
+  },
+  "outros": {
+    "texto": "*Outros Produtos*\nPor favor, descreva o que você precisa ou aguarde para falar com um atendente.",
+    "opcoes": {
+      "1": { "tipo": "non-response", "texto": "Encaminhando para atendimento humano. Aguarde por favor." },
+      "0": { "tipo": "menu", "destino": "Inicio" }
+    }
+  }
+}
