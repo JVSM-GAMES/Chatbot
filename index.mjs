@@ -1,12 +1,10 @@
 import express from 'express'
 import Pino from 'pino'
-import makeWASocket, {
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  useMultiFileAuthState
-} from '@whiskeysockets/baileys'
+import * as baileys from '@whiskeysockets/baileys'
 import qrcode from 'qrcode'
 import { Boom } from '@hapi/boom'
+
+const { makeWASocket, DisconnectReason, fetchLatestBaileysVersion, useMultiFileAuthState } = baileys
 
 const logger = Pino({ level: process.env.LOG_LEVEL || 'info' })
 
