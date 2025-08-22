@@ -9,14 +9,13 @@ const { makeWASocket, DisconnectReason, fetchLatestBaileysVersion, useMultiFileA
 const logger = Pino({ level: process.env.LOG_LEVEL || 'info' })
 const app = express()
 
-// ------------------ HTTP SERVER ------------------
+let latestQr = null
+
+// Endpoint raiz
 app.get('/', (_, res) => res.send('ok'))
 app.get('/ping', (_, res) => res.json({ ok: true, ts: Date.now() }))
 
-// Variável para armazenar o QR atual
-let latestQr = null
-
-// Endpoint para exibir QR
+// QR code
 app.get('/qr', (_, res) => {
   if (latestQr) {
     res.send(`
@@ -35,7 +34,7 @@ app.get('/qr', (_, res) => {
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => logger.info({ PORT }, 'HTTP server online'))
 
-// ------------------ MENU CONFIG ------------------
+// ------------------ MENUS ------------------
 const MAIN_MENU = `*Olá, seja bem-vindo ao atendimento CG AGRO 🌿*
 
 Qual tipo de produto você está procurando hoje?
@@ -75,24 +74,32 @@ const SUBMENUS = {
 0. Voltar ao menu inicial`
 }
 
-// ------------------ SESSÕES ------------------
-const sessions = {} // { userJid: { menu: 'main' | 'submenu', timeout: null } }
-const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 minutos
+// ------------------ CONTROLE DE SESSÕES ------------------
+const sessions = {} // { jid: { menu: 'main' | 'submenu', warnTimeout, resetTimeout } }
+const WARN_TIME = 5 * 60 * 1000 // 5 minutos
+const RESET_TIME = 10 * 60 * 1000 // 10 minutos
 
 function resetSession(jid) {
-  sessions[jid] = { menu: 'main', timeout: null }
+  sessions[jid] = { menu: 'main', warnTimeout: null, resetTimeout: null }
 }
 
-function setInactivityTimer(jid, sock) {
-  if (sessions[jid].timeout) clearTimeout(sessions[jid].timeout)
-  sessions[jid].timeout = setTimeout(async () => {
+async function setInactivityTimers(jid, sock) {
+  if (sessions[jid].warnTimeout) clearTimeout(sessions[jid].warnTimeout)
+  if (sessions[jid].resetTimeout) clearTimeout(sessions[jid].resetTimeout)
+
+  sessions[jid].warnTimeout = setTimeout(async () => {
+    await sock.sendMessage(jid, { text: '*Aviso:* sua sessão será reiniciada em 5 minutos se não houver interação.' })
+    logger.info({ jid }, 'Aviso de inatividade enviado')
+  }, WARN_TIME)
+
+  sessions[jid].resetTimeout = setTimeout(async () => {
     resetSession(jid)
     await sock.sendMessage(jid, { text: '*Sessão expirada por inatividade. Voltando ao menu inicial.*\n\n' + MAIN_MENU })
     logger.info({ jid }, 'Sessão reiniciada por inatividade')
-  }, INACTIVITY_TIMEOUT)
+  }, RESET_TIME)
 }
 
-// ------------------ HELPER ------------------
+// ------------------ EXTRA ------------------
 const getText = (msg) => {
   const m = msg.message
   if (!m) return ''
@@ -105,7 +112,7 @@ const getText = (msg) => {
   return ''
 }
 
-// ------------------ WHATSAPP BOT ------------------
+// ------------------ BOT ------------------
 async function startWA() {
   const { state, saveCreds } = await useMultiFileAuthState('./auth_info')
   const { version } = await fetchLatestBaileysVersion()
@@ -117,21 +124,18 @@ async function startWA() {
     logger
   })
 
-  // Eventos de conexão
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update
     if (qr) {
       latestQr = await qrcode.toDataURL(qr)
-      logger.info('QR atualizado. Acesse /qr para visualizar e escanear.')
+      logger.info('QR atualizado. Acesse /qr para escanear.')
     }
     if (connection === 'close') {
       const code = new Boom(lastDisconnect?.error)?.output?.statusCode
-      const shouldReconnect = code !== DisconnectReason.loggedOut
-      logger.warn({ code }, 'Conexão fechada')
-      if (shouldReconnect) {
+      if (code !== DisconnectReason.loggedOut) {
         setTimeout(startWA, 2000)
       } else {
-        logger.error('Sessão deslogada. Apague a pasta ./auth_info e pareie novamente.')
+        logger.error('Sessão deslogada. Apague ./auth_info e pareie novamente.')
       }
     } else if (connection === 'open') {
       latestQr = null
@@ -141,7 +145,6 @@ async function startWA() {
 
   sock.ev.on('creds.update', saveCreds)
 
-  // Mensagens recebidas
   sock.ev.on('messages.upsert', async ({ messages }) => {
     for (const msg of messages) {
       if (!msg.message || msg.key.fromMe) continue
@@ -151,7 +154,7 @@ async function startWA() {
       const text = getText(msg).trim()
 
       if (!sessions[jid]) resetSession(jid)
-      setInactivityTimer(jid, sock)
+      setInactivityTimers(jid, sock)
 
       if (sessions[jid].menu === 'main') {
         if (/^[1-6]$/.test(text)) {
