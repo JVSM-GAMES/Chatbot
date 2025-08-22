@@ -3,21 +3,22 @@ import Pino from 'pino'
 import * as baileys from '@whiskeysockets/baileys'
 import qrcode from 'qrcode'
 import { Boom } from '@hapi/boom'
+import { handleMessage } from './sessionHandler.mjs'
 
 const { makeWASocket, DisconnectReason, fetchLatestBaileysVersion, useMultiFileAuthState } = baileys
 
 const logger = Pino({ level: process.env.LOG_LEVEL || 'info' })
 
-// --- HTTP server para healthcheck/keep-alive ---
 const app = express()
-app.get('/', (_, res) => res.send('ok'))
-app.get('/ping', (_, res) => res.json({ ok: true, ts: Date.now() }))
 const PORT = process.env.PORT || 3000
 
-// Variável para armazenar o QR atual em base64
+let sock = null
 let latestQr = null
 
-// Endpoint para exibir QR code
+// --- Endpoints ---
+app.get('/', (_, res) => res.send('ok'))
+app.get('/ping', (_, res) => res.json({ ok: true, ts: Date.now() }))
+
 app.get('/qr', (_, res) => {
   if (latestQr) {
     res.send(`
@@ -25,6 +26,9 @@ app.get('/qr', (_, res) => {
         <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;">
           <h2>Escaneie o QR no WhatsApp > Dispositivos conectados</h2>
           <img src="${latestQr}" style="width:300px;height:300px;" />
+          <form method="POST" action="/disconnect">
+            <button type="submit">Desconectar sessão atual</button>
+          </form>
         </body>
       </html>
     `)
@@ -33,9 +37,19 @@ app.get('/qr', (_, res) => {
   }
 })
 
+app.post('/disconnect', (_, res) => {
+  if (sock) {
+    sock.logout()
+    latestQr = null
+    res.send('Sessão desconectada. Gere um novo QR na página /qr')
+  } else {
+    res.send('Nenhuma sessão ativa.')
+  }
+})
+
 app.listen(PORT, () => logger.info({ PORT }, 'HTTP server online'))
 
-// Helper para extrair texto de várias formas de mensagem
+// --- WhatsApp ---
 const getText = (msg) => {
   const m = msg.message
   if (!m) return ''
@@ -52,7 +66,7 @@ async function startWA() {
   const { state, saveCreds } = await useMultiFileAuthState('./auth')
   const { version } = await fetchLatestBaileysVersion()
 
-  const sock = makeWASocket({
+  sock = makeWASocket({
     version,
     auth: state,
     printQRInTerminal: false,
@@ -61,9 +75,10 @@ async function startWA() {
 
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update
+
     if (qr && !process.env.WA_PHONE_NUMBER) {
       latestQr = await qrcode.toDataURL(qr)
-      logger.info('QR atualizado. Acesse /qr para visualizar e escanear.')
+      logger.info('QR atualizado. Acesse /qr para escanear.')
     }
 
     if (connection === 'close') {
@@ -83,30 +98,12 @@ async function startWA() {
 
   sock.ev.on('creds.update', saveCreds)
 
-  try {
-    if (!state.creds?.registered && process.env.WA_PHONE_NUMBER) {
-      const code = await sock.requestPairingCode(process.env.WA_PHONE_NUMBER)
-      logger.warn(`Código de pareamento: ${code} (WhatsApp > Dispositivos conectados > "Conectar com número")`)
-    }
-  } catch (e) {
-    logger.error(e, 'Falha ao gerar código de pareamento; use o QR code via /qr.')
-  }
-
   sock.ev.on('messages.upsert', async ({ messages }) => {
     for (const msg of messages) {
       if (!msg.message || msg.key.fromMe) continue
       const jid = msg.key.remoteJid || ''
-      if (!jid.endsWith('@s.whatsapp.net')) continue
-
-      const text = getText(msg).trim().toLowerCase()
-      if (text === 'oi') {
-        try {
-          await sock.sendMessage(jid, { text: 'Bom dia' }, { quoted: msg })
-          logger.info({ to: jid }, 'Respondi "Bom dia"')
-        } catch (err) {
-          logger.error(err, 'Erro ao responder')
-        }
-      }
+      const text = getText(msg).trim()
+      await handleMessage(sock, jid, text, msg)
     }
   })
 }
