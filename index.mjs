@@ -1,11 +1,9 @@
 import express from 'express'
 import Pino from 'pino'
-import makeWASocket, {
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  useMultiFileAuthState
-} from '@whiskeysockets/baileys'
+import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys'
 import qrcode from 'qrcode-terminal'
+
+
 
 const logger = Pino({ level: process.env.LOG_LEVEL || 'info' })
 
@@ -29,53 +27,41 @@ const getText = (msg) => {
   return ''
 }
 
-async function startWA () {
-  const { state, saveCreds } = await useMultiFileAuthState('./auth') // guardado no FS local do container
-  const { version } = await fetchLatestBaileysVersion()
+async function startWA() {
+  const { state, saveCreds } = await useMultiFileAuthState('baileys_auth')
 
-  let sock = makeWASocket({
-    version,
+  const sock = makeWASocket({
     auth: state,
-    // Se você NÃO definir WA_PHONE_NUMBER, mostramos QR no log
-    printQRInTerminal: !process.env.WA_PHONE_NUMBER,
-    logger
+    printQRInTerminal: true
   })
 
-  // Exibe QR bonito no terminal (melhora legibilidade em logs)
-  sock.ev.on('connection.update', async (update) => {
+  sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update
-    if (qr && !process.env.WA_PHONE_NUMBER) {
+    if (qr) {
       qrcode.generate(qr, { small: true })
-      logger.info('Escaneie o QR em WhatsApp > Dispositivos conectados')
     }
     if (connection === 'close') {
-      const code = new Boom(lastDisconnect?.error)?.output?.statusCode
-      const shouldReconnect = code !== DisconnectReason.loggedOut
-      logger.warn({ code }, 'Conexão fechada')
-      if (shouldReconnect) {
-        setTimeout(startWA, 2000)
-      } else {
-        logger.error('Sessão deslogada. Apague a pasta ./auth e pareie novamente.')
-      }
-    } else if (connection === 'open') {
-      logger.info('Conectado ao WhatsApp ✅')
+      const shouldReconnect = (lastDisconnect?.error?.output?.statusCode) !== DisconnectReason.loggedOut
+      if (shouldReconnect) startWA()
+    }
+    if (connection === 'open') {
+      console.log('✅ Conectado ao WhatsApp!')
     }
   })
 
-  // Persistência das credenciais
-  sock.ev.on('creds.update', saveCreds)
+  sock.ev.on('messages.upsert', async (m) => {
+    const msg = m.messages[0]
+    if (!msg.message) return
+    const texto = msg.message.conversation?.toLowerCase() || ''
 
-  // Pareamento via "código de pareamento" (opcional)
-  // Defina WA_PHONE_NUMBER=seunumero (ex: 5511999999999) nos envs do Render.
-  // Aí o console mostra um código de 8 dígitos para digitar em WhatsApp > Dispositivos conectados.
-  try {
-    if (!state.creds?.registered && process.env.WA_PHONE_NUMBER) {
-      const code = await sock.requestPairingCode(process.env.WA_PHONE_NUMBER)
-      logger.warn(`Código de pareamento: ${code} (WhatsApp > Dispositivos conectados > "Conectar com número")`)
+    if (texto === 'oi') {
+      await sock.sendMessage(msg.key.remoteJid, { text: 'Bom dia!' })
     }
-  } catch (e) {
-    logger.error(e, 'Falha ao gerar código de pareamento; use o QR code no log.')
-  }
+  })
+
+  sock.ev.on('creds.update', saveCreds)
+}
+
 
   // Regra: se alguém mandar "Oi", responder "Bom dia"
   sock.ev.on('messages.upsert', async ({ messages }) => {
