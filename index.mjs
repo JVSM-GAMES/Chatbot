@@ -11,13 +11,13 @@ const PORT = process.env.PORT || 3000;
 
 let sock = null;
 let qrCodeData = null;
-let reconnectAttempts = 0;
-const MAX_RECONNECT = 3;
-let reconnectTimeout = null;
 const AUTH_FOLDER = "baileys_auth_info";
 
+// Lista de conexões SSE
+let clients = [];
+
 async function startSock(forceNewAuth = false) {
-  if (sock?.ws?.readyState === 1) return; // Já conectado
+  if (sock?.ws?.readyState === 1) return;
 
   if (forceNewAuth && fs.existsSync(AUTH_FOLDER)) {
     fs.rmSync(AUTH_FOLDER, { recursive: true, force: true });
@@ -37,35 +37,27 @@ async function startSock(forceNewAuth = false) {
 
     if (qr) {
       qrCodeData = await qrcode.toDataURL(qr);
-      reconnectAttempts = 0;
+      notifyClients(qrCodeData); // envia QR para todos conectados via SSE
       console.log("📲 Novo QR gerado!");
     }
 
     if (connection === "open") {
       console.log("✅ Conectado ao WhatsApp!");
       qrCodeData = null;
-      reconnectAttempts = 0;
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      notifyClients(null); // remove QR do front
     }
 
     if (connection === "close") {
       const shouldReconnect =
-        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+        lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut &&
+        fs.existsSync(AUTH_FOLDER); // só tenta reconectar se tiver auth salva
 
       console.log("❌ Conexão fechada. Reconectar:", shouldReconnect);
 
       if (shouldReconnect) {
-        reconnectAttempts++;
-        if (reconnectAttempts <= MAX_RECONNECT) {
-          console.log(`🔄 Tentando reconectar... (${reconnectAttempts}/${MAX_RECONNECT})`);
-          reconnectTimeout = setTimeout(() => startSock(), 5000);
-        } else {
-          console.log("⚠️ Muitas tentativas falhadas. Descarta auth e aguardando novo QR...");
-          reconnectAttempts = 0;
-          startSock(true); // força gerar nova sessão
-        }
+        setTimeout(() => startSock(), 5000);
       } else {
-        console.log("🚫 Sessão encerrada manualmente ou logout detectado.");
+        console.log("🚫 Sessão encerrada ou sem credenciais.");
       }
     }
   });
@@ -73,62 +65,65 @@ async function startSock(forceNewAuth = false) {
   sock.ev.on("creds.update", saveCreds);
 }
 
+// Envia QR via SSE para todos conectados
+function notifyClients(qr) {
+  clients.forEach((res) => {
+    res.write(`data: ${JSON.stringify({ qr })}\n\n`);
+  });
+}
+
 // Rotas
 app.get("/", (req, res) => {
-  if (sock?.ws?.readyState === 1) {
-    res.send(`
-      <html>
-        <head><title>WhatsApp Bot</title></head>
-        <body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
-          <h2>✅ Conectado ao WhatsApp!</h2>
-          <a href="/qr">Ver QR Code</a>
-          <button onclick="disconnect()" style="margin-top:20px;padding:10px 20px;">Desconectar</button>
-          <script>
-            async function disconnect() {
-              await fetch('/disconnect');
-              alert('Desconectado! Atualize a página para gerar novo QR.');
+  res.send(`
+    <html>
+      <head><title>WhatsApp Bot</title></head>
+      <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
+        <h2>Status do Bot</h2>
+        <img id="qr" style="width:300px;" />
+        <p id="status">Aguardando QR...</p>
+        <script>
+          const qrImg = document.getElementById('qr');
+          const statusText = document.getElementById('status');
+          const evtSource = new EventSource('/events');
+
+          evtSource.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            if (data.qr) {
+              qrImg.src = data.qr;
+              statusText.textContent = "Escaneie o QR para conectar";
+            } else {
+              qrImg.style.display = "none";
+              statusText.textContent = "✅ Conectado ao WhatsApp!";
             }
-          </script>
-        </body>
-      </html>
-    `);
-  } else {
-    res.redirect("/qr");
-  }
+          };
+        </script>
+      </body>
+    </html>
+  `);
 });
 
-app.get("/qr", (req, res) => {
-  if (qrCodeData) {
-    res.send(`
-      <html>
-        <head><title>QR Code WhatsApp</title></head>
-        <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
-          <h2>Escaneie o QR para conectar</h2>
-          <img src="${qrCodeData}" />
-          <a href="/">Voltar</a>
-        </body>
-      </html>
-    `);
-  } else {
-    res.send(`
-      <html>
-        <head><title>QR Code WhatsApp</title></head>
-        <body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
-          <h2>⌛ Aguardando conexão...</h2>
-          <a href="/">Voltar</a>
-        </body>
-      </html>
-    `);
-  }
+// Endpoint SSE para atualização em tempo real
+app.get("/events", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  clients.push(res);
+  console.log("📡 Novo cliente SSE conectado.");
+
+  req.on("close", () => {
+    clients = clients.filter((client) => client !== res);
+    console.log("❌ Cliente SSE desconectado.");
+  });
 });
 
 app.get("/disconnect", async (req, res) => {
   if (sock) {
     await sock.logout();
     qrCodeData = null;
-    reconnectAttempts = 0;
     console.log("🚪 Logout realizado manualmente.");
-    startSock(true); // força gerar novo QR após logout
+    startSock(true);
   }
   res.send("Desconectado!");
 });
