@@ -1,7 +1,10 @@
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from "@whiskeysockets/baileys"
+import * as baileys from "@whiskeysockets/baileys"
 import express from "express"
 import qrcode from "qrcode"
 import pino from "pino"
+
+const { makeWASocket, useMultiFileAuthState, DisconnectReason } = baileys
+
 
 const app = express()
 const PORT = process.env.PORT || 3000
