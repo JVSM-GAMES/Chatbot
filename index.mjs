@@ -132,15 +132,21 @@ function resetTimeout(jid) {
 
 // ---------- WHATSAPP CONNECTION ----------
 async function startWA() {
-  const auth = initAuthCreds()
+ import { useMultiFileAuthState } from '@whiskeysockets/baileys'
+
+async function startWA() {
+  const { state, saveCreds } = await useMultiFileAuthState('./auth_info') // cria pasta local
   const { version } = await fetchLatestBaileysVersion()
 
   const sock = makeWASocket({
     version,
-    auth: { creds: auth, keys: baileys.initInMemoryKeyStore() },
+    auth: state,
     printQRInTerminal: false,
     logger
   })
+
+  sock.ev.on('creds.update', saveCreds) // salva credenciais automaticamente
+
 
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update
