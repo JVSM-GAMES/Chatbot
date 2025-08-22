@@ -1,111 +1,77 @@
-import express from 'express'
-import Pino from 'pino'
-import * as baileys from '@whiskeysockets/baileys'
-import qrcode from 'qrcode'
-import { Boom } from '@hapi/boom'
-import { handleMessage } from './sessionHandler.mjs'
+import express from "express";
+import Pino from "pino";
+import { makeWASocket, DisconnectReason } from "@whiskeysockets/baileys";
+import { menus } from "./sessionHandler.mjs";
 
-const { makeWASocket, DisconnectReason, fetchLatestBaileysVersion, useMultiFileAuthState } = baileys
+const app = express();
+const logger = Pino({ level: "info" });
 
-const logger = Pino({ level: process.env.LOG_LEVEL || 'info' })
+const sessions = {}; // Sessões por número do cliente
 
-const app = express()
-const PORT = process.env.PORT || 3000
-
-let sock = null
-let latestQr = null
-
-// --- Endpoints ---
-app.get('/', (_, res) => res.send('ok'))
-app.get('/ping', (_, res) => res.json({ ok: true, ts: Date.now() }))
-
-app.get('/qr', (_, res) => {
-  if (latestQr) {
-    res.send(`
-      <html>
-        <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;">
-          <h2>Escaneie o QR no WhatsApp > Dispositivos conectados</h2>
-          <img src="${latestQr}" style="width:300px;height:300px;" />
-          <form method="POST" action="/disconnect">
-            <button type="submit">Desconectar sessão atual</button>
-          </form>
-        </body>
-      </html>
-    `)
-  } else {
-    res.send('QR ainda não gerado ou já autenticado.')
-  }
-})
-
-app.post('/disconnect', (_, res) => {
-  if (sock) {
-    sock.logout()
-    latestQr = null
-    res.send('Sessão desconectada. Gere um novo QR na página /qr')
-  } else {
-    res.send('Nenhuma sessão ativa.')
-  }
-})
-
-app.listen(PORT, () => logger.info({ PORT }, 'HTTP server online'))
-
-// --- WhatsApp ---
-const getText = (msg) => {
-  const m = msg.message
-  if (!m) return ''
-  if (m.conversation) return m.conversation
-  if (m.extendedTextMessage) return m.extendedTextMessage.text || ''
-  if (m.imageMessage) return m.imageMessage.caption || ''
-  if (m.videoMessage) return m.videoMessage.caption || ''
-  if (m.ephemeralMessage) return getText({ message: m.ephemeralMessage.message })
-  if (m.viewOnceMessage) return getText({ message: m.viewOnceMessage.message })
-  return ''
+// Cria ou reseta a sessão
+function getSession(clientId) {
+    if (!sessions[clientId]) {
+        sessions[clientId] = {
+            currentMenu: menus.atendimentoMenu,
+            timeout: null,
+            warning: null
+        };
+    }
+    return sessions[clientId];
 }
 
+// Reseta sessão após 10 minutos
+function startInactivityTimers(clientId, sock) {
+    const session = sessions[clientId];
+    if (session.warning) clearTimeout(session.warning);
+    if (session.timeout) clearTimeout(session.timeout);
+
+    session.warning = setTimeout(() => {
+        sock.sendMessage(clientId, { text: "Atenção: seu atendimento será encerrado em 5 minutos por inatividade." });
+    }, 5 * 60 * 1000);
+
+    session.timeout = setTimeout(() => {
+        sessions[clientId] = undefined;
+    }, 10 * 60 * 1000);
+}
+
+// Função de processamento de mensagens
+async function processMessage(clientId, msg, sock) {
+    const session = getSession(clientId);
+    startInactivityTimers(clientId, sock);
+
+    const response = await session.currentMenu.handleInput(msg, session);
+    if (response?.msg) {
+        await sock.sendMessage(clientId, { text: response.msg });
+    }
+}
+
+// Inicialização do bot
 async function startWA() {
-  const { state, saveCreds } = await useMultiFileAuthState('./auth')
-  const { version } = await fetchLatestBaileysVersion()
+    const sock = makeWASocket({ printQRInTerminal: true });
 
-  sock = makeWASocket({
-    version,
-    auth: state,
-    printQRInTerminal: false,
-    logger
-  })
+    sock.ev.on("messages.upsert", async ({ messages }) => {
+        for (const m of messages) {
+            if (!m.message || m.key.fromMe) continue;
+            const clientId = m.key.remoteJid;
+            const text = m.message.conversation || "";
+            await processMessage(clientId, text, sock);
+        }
+    });
 
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect, qr } = update
+    sock.ev.on("connection.update", (update) => {
+        if (update.connection === "close" && update.lastDisconnect?.error?.output?.statusCode !== 401) {
+            startWA(); // Reconnect
+        }
+    });
 
-    if (qr && !process.env.WA_PHONE_NUMBER) {
-      latestQr = await qrcode.toDataURL(qr)
-      logger.info('QR atualizado. Acesse /qr para escanear.')
-    }
-
-    if (connection === 'close') {
-      const code = new Boom(lastDisconnect?.error)?.output?.statusCode
-      const shouldReconnect = code !== DisconnectReason.loggedOut
-      logger.warn({ code }, 'Conexão fechada')
-      if (shouldReconnect) {
-        setTimeout(startWA, 2000)
-      } else {
-        logger.error('Sessão deslogada. Apague a pasta ./auth e pareie novamente.')
-      }
-    } else if (connection === 'open') {
-      latestQr = null
-      logger.info('Conectado ao WhatsApp ✅')
-    }
-  })
-
-  sock.ev.on('creds.update', saveCreds)
-
-  sock.ev.on('messages.upsert', async ({ messages }) => {
-    for (const msg of messages) {
-      if (!msg.message || msg.key.fromMe) continue
-      const jid = msg.key.remoteJid || ''
-      const text = getText(msg).trim()
-      await handleMessage(sock, jid, text, msg)
-    }
-  })
+    return sock;
 }
 
-startWA().catch(err => logger.error(err, 'Erro fatal'))
+startWA();
+
+app.get("/qr", (req, res) => {
+    res.send("<h1>QR Code será exibido no terminal</h1>");
+});
+
+app.listen(process.env.PORT || 10000, () => logger.info({ PORT: process.env.PORT || 10000, msg: "HTTP server online" }));
