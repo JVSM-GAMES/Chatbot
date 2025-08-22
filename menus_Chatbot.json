@@ -1,62 +1,44 @@
 {
   "Inicio": {
-    "texto": "Olá, seja bem-vindo ao atendimento *CG AGRO* 🌿\n\nQual tipo de produto você está procurando hoje?\n\n*Digite o número da opção desejada:*\n1 - RAÇÕES\n2 - SEMENTES\n3 - MEDICAMENTOS VETERINÁRIOS\n4 - COCHO, TAMBOR E CAIXA D'ÁGUA\n5 - EQUIPAMENTOS EM GERAL\n6 - OUTROS\n0 - Voltar ao menu inicial",
-    "opcoes": {
-      "1": { "tipo": "menu", "destino": "racoes" },
-      "2": { "tipo": "menu", "destino": "sementes" },
-      "3": { "tipo": "menu", "destino": "medicamentos" },
-      "4": { "tipo": "menu", "destino": "cocho" },
-      "5": { "tipo": "menu", "destino": "equipamentos" },
-      "6": { "tipo": "menu", "destino": "outros" }
+    "texto": "Olá seja Bem vindo ao atendimento *CG AGRO* 🌿\n\nqual tipo de produto você está procurando hoje?\n\n*digite o numero da opção desejada:*\n\n1- RAÇÕES\n2- SEMENTES\n3- MEDICAMENTOS VETERINARIOS\n4- COCHO , TAMBOR E CAIXA D´AGUA\n5- EQUIPAMENTOS EM GERAL\n6- OUTROS",
+    "1": { "open": "racao" },
+    "2": "Ok entendi! você está interessado em *sementes*\n\nestas são algumas das que temos disponivéis pra você.\n\n*Sementes facholi*\n\n- Brachiaria brizantha piatã - R$ 24,50 kg\n- Brachiaria brizantha marandu R$ 24,90 kg\n- Brachiaria brizantha marandu integra R$ 22,00kg\n- panicum massai R$ 25,50 kg\n- panicum myagui R$ 16,00 kg\n- panicum Mombaça integra R$ 19,60kg\n\nme diga qual delas você quer e a quantidade que deseja.\ne em instantes você será atendido! ⏳😉\n\nse quiser reiniciar o atendimento tecle 0",
+    "3": {
+      "texto": "Qual Medicamento você precisa ou qual problema você está tendo com o seu animal?\n\nem alguns instantes um atendente falará com você 😉⏳",
+      "non-response": true
+    },
+    "4": { "open": "cocho" },
+    "5": {
+      "texto": "Poderia me dizer qual equipamento você precisa?\nem alguns instantes um atendente falará com você 😉⏳\n\nse quiser reiniciar o atendimento tecle 0",
+      "non-response": true
+    },
+    "6": {
+      "texto": "O que você precisa hoje? estamos aqui para melhor lhe atender! 😊",
+      "non-response": true
     }
   },
-  "racoes": {
-    "texto": "*Menu Rações*\nEscolha uma das opções:\n1 - Ração para Bovinos\n2 - Ração para Suínos\n3 - Ração para Aves\n0 - Voltar ao menu inicial",
-    "opcoes": {
-      "1": { "tipo": "resposta", "texto": "Ração para Bovinos disponível! Entre em contato com nosso setor comercial para detalhes." },
-      "2": { "tipo": "resposta", "texto": "Ração para Suínos disponível! Entre em contato com nosso setor comercial para detalhes." },
-      "3": { "tipo": "resposta", "texto": "Ração para Aves disponível! Entre em contato com nosso setor comercial para detalhes." },
-      "0": { "tipo": "menu", "destino": "Inicio" }
-    }
-  },
-  "sementes": {
-    "texto": "*Menu Sementes*\nEscolha uma das opções:\n1 - Milho\n2 - Soja\n0 - Voltar ao menu inicial",
-    "opcoes": {
-      "1": { "tipo": "resposta", "texto": "Sementes de Milho disponíveis! Entre em contato para saber mais." },
-      "2": { "tipo": "resposta", "texto": "Sementes de Soja disponíveis! Entre em contato para saber mais." },
-      "0": { "tipo": "menu", "destino": "Inicio" }
-    }
-  },
-  "medicamentos": {
-    "texto": "*Menu Medicamentos Veterinários*\nEscolha uma das opções:\n1 - Antibióticos\n2 - Vermífugos\n0 - Voltar ao menu inicial",
-    "opcoes": {
-      "1": { "tipo": "resposta", "texto": "Antibióticos disponíveis! Consulte nosso setor técnico." },
-      "2": { "tipo": "resposta", "texto": "Vermífugos disponíveis! Consulte nosso setor técnico." },
-      "0": { "tipo": "menu", "destino": "Inicio" }
-    }
+  "racao": {
+    "texto": "Digite o numero da opção desejada:\n\n1- Ração para peixe\n2- Ração para Aves\n3- Ração para Suino\n4- Ração para Cavalo\n5- Ração para Galinha\n6- Ração de Pet\n\nse quiser reiniciar o atendimento tecle 0",
+    "1": "Ração de peixe *agronorte*\n\n- 28% 12 a 14 - R$ 85,00\n- 28% 8 a 10 - R$ 85,00\n- 32% 4 a 6 - R$ 90,00\n- 32% 6 a 8 - R$ 90,00\n- 40% juvenil 2 a 3 - R$ 170,85\n- 45% alevinos 1,2 - R$ 276,57\n- 45% alevinos 1,7 - R$ 246,00\n\nRação de peixe *nutriforte*\n\n- 28% 10mm - R$ 85,00\n- 28% 8mm - R$ 85,00\n- 32% 6mm - R$ 90,00\n- 32% 8mm - R$ 90,00\n\nObservação: Todas são de 25 Kg\n\nAgora me diga qual desses produtos mais lhe interessa e em poucos instantes o vendedor vai atendê-lo e responder todas suas dúvidas. 😉",
+    "2": "*Ração para Pássaro*\n\nMistura para periquito vita mix 500g - R$ 16,86\nMistura para curió e bicudo vita mix 500g - R$ 20,00\nMistura triturada pássaro preto 500g - R$ 14,38\nSementes de girassol gigante 1 kg - R$ 20,32 (a granel)\nAlcon club curió 325g - R$ 62,76\n\nAgora me diga qual desses produtos mais lhe interessa e em poucos instantes o vendedor vai atendê-lo e responder todas suas dúvidas. 😉",
+    "3": "Ração para suínos - *agronort*\n\nSuino kintal terminação 40kg - R$119,11\nSuino kintal lactação 40kg - R$123,50\nSuino kintal inicial 40kg - R$131,74\nSuino kintal gestação 40kg - R$117,04\nSuino kintal crescimento 40kg - R$121,07\n\nAgora me diga qual desses produtos mais lhe interessa e em poucos instantes o vendedor vai atendê-lo e responder todas suas dúvidas. 😉",
+    "4": "Certo! você quer ração para cavalo.\n\nTemos as de melhor qualidade aqui na *CG AGRO*\n\n*Produtos disponíveis*\nRação para cavalo - agronort\nEquilíbrio esporte 40kg - R$ 98,00\n\nAgora me diga qual desses produtos mais lhe interessa e em poucos instantes o vendedor vai atendê-lo e responder todas suas dúvidas. 😉",
+    "5": "Ração de galinha - *agronorte*\n\nCrescimento e engorda 40kg - R$ 110,00\nPré inicial 40kg - R$ 189,00\nPostura (poedeira) 40kg - R$ 110,00\n\nAgora me diga qual desses produtos mais lhe interessa e em poucos instantes o vendedor vai atendê-lo e responder todas suas dúvidas. 😉\n\nSe quiser reiniciar o atendimento envie \"inicio\"",
+    "6": "*Ração de cachorro*\n\nBomguy adulto - 25 kg carne coex - R$ 162,00\nNutriforte Dogão adulto 25kg - R$ 174,40\nBomguy filhote 25kg - R$ 338,96\nUpdog adulto 10,1 kg - R$ 72,76\nUpdog adulto 25kg - R$ 125,28\nUpdog filhote 10,1 kg - R$ 75,98\nUpdog filhote 25kg - R$ 149,67\n\nAgora me diga qual desses produtos mais lhe interessa e em poucos instantes o vendedor vai atendê-lo e responder todas suas dúvidas. 😉"
   },
   "cocho": {
-    "texto": "*Menu Cocho, Tambor e Caixa D'Água*\nEscolha uma das opções:\n1 - Cochos\n2 - Tambores\n3 - Caixas D'Água\n0 - Voltar ao menu inicial",
-    "opcoes": {
-      "1": { "tipo": "resposta", "texto": "Temos Cochos disponíveis! Fale com nossa equipe para saber mais." },
-      "2": { "tipo": "resposta", "texto": "Temos Tambores disponíveis! Fale com nossa equipe para saber mais." },
-      "3": { "tipo": "resposta", "texto": "Temos Caixas D'Água disponíveis! Fale com nossa equipe para saber mais." },
-      "0": { "tipo": "menu", "destino": "Inicio" }
-    }
-  },
-  "equipamentos": {
-    "texto": "*Menu Equipamentos em Geral*\nEscolha uma das opções:\n1 - Pulverizadores\n2 - Máquinas Agrícolas\n0 - Voltar ao menu inicial",
-    "opcoes": {
-      "1": { "tipo": "resposta", "texto": "Pulverizadores disponíveis para pronta entrega!" },
-      "2": { "tipo": "resposta", "texto": "Máquinas Agrícolas disponíveis! Consulte condições." },
-      "0": { "tipo": "menu", "destino": "Inicio" }
-    }
-  },
-  "outros": {
-    "texto": "*Outros Produtos*\nPor favor, descreva o que você precisa ou aguarde para falar com um atendente.",
-    "opcoes": {
-      "1": { "tipo": "non-response", "texto": "Encaminhando para atendimento humano. Aguarde por favor." },
-      "0": { "tipo": "menu", "destino": "Inicio" }
+    "texto": "Digite o numero da opção desejada:\n\n1- COCHO\n2- TAMBOR\n3- CAIXA D´AGUA\n\nse quiser reiniciar o atendimento tecle 0",
+    "1": {
+      "texto": "Ok! Logo um de nossos atendentes falará com você sobre esse produto.\nAguarde um instante! 😉",
+      "non-response": true
+    },
+    "2": {
+      "texto": "*Estes são os produtos disponíveis no momento:*\n\nTAMBOR 25 LITROS\nTAMBOR 10 LITROS\nTAMBOR 110 LITROS\nTAMBOR 240 LITROS\nTAMBOR BOCA GRANDE 240 LITROS\nTAMBOR 70 LITROS\n\nQual desses lhe interessa mais?\nDeixe suas dúvidas e logo um de nossos atendentes falará com você sobre esse produto.\nAguarde um instante! 😉",
+      "non-response": true
+    },
+    "3": {
+      "texto": "*Produtos disponíveis*\n\nCAIXA 1000 LITROS\n\nMe diga as especificações da caixa d'água que deseja e logo um vendedor falará com você! 😊",
+      "non-response": true
     }
   }
 }
