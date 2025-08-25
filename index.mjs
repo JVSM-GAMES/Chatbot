@@ -202,7 +202,10 @@ async function startWA() {
       if (s.firstMessage) {
         // ✅ Mensagem inicial simples
         await sock.sendMessage(jid, {
-          text: `Olá seja Bem vindo ao atendimento *CG AGRO* 🌿\n\nQual tipo de produto você está procurando hoje? Fale o que você está buscando e logo um de nossos atendentes irá responder.`
+          text: `Olá seja Bem vindo ao *CG AGRO* 🌿\nQual de nossos produtos poderia te servir?\n- RAÇÕES\n- SEMENTES\n- MEDICAMENTOS VETERINÁRIOS\n- COCHO, TAMBOR E CAIXA D´AGUA\n- EQUIPAMENTOS EM GERAL`
+        })
+        await sock.sendMessage(jid, {
+          text: `Logo um de nossos atendentes irá atender voçê. 😉`
         })
 
         s.firstMessage = false
