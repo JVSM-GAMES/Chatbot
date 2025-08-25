@@ -12,8 +12,7 @@ app.use(express.json())
 
 const PORT = process.env.PORT || 10000
 
-// Carrega menus e settings
-const menus = JSON.parse(fs.readFileSync('./menus_Chatbot.json', 'utf-8'))
+// Configurações
 const settingsFile = './settings.json'
 let settings = { allowGroups: false, blockedNumbers: [] }
 if (fs.existsSync(settingsFile)) {
@@ -28,7 +27,7 @@ if (fs.existsSync(settingsFile)) {
 let latestQr = null
 const sessions = {}
 
-// Endpoints principais
+// Endpoints
 app.get('/', (_, res) => res.send('ok'))
 
 app.get('/qr', (_, res) => {
@@ -40,7 +39,7 @@ app.get('/qr', (_, res) => {
     </body></html>`)
 })
 
-// Página interativa de configurações
+// Configurações via web
 app.get('/settings', (_, res) => {
   res.send(`
     <html>
@@ -87,7 +86,6 @@ app.get('/settings', (_, res) => {
   `)
 })
 
-// Atualiza configurações
 app.post('/settings', (req, res) => {
   const { allowGroups, blockedNumbers } = req.body
   if (typeof allowGroups === 'boolean') settings.allowGroups = allowGroups
@@ -111,17 +109,11 @@ function sanitizeText(msg) {
   ).trim()
 }
 
-async function sendMenu(sock, jid, menuKey = 'Inicio') {
-  const menu = menus[menuKey] || menus['Inicio']
-  await sock.sendMessage(jid, { text: menu.texto })
-}
-
 function ensureSession(jid) {
   if (!sessions[jid]) {
     sessions[jid] = {
-      menu: 'Inicio',
+      firstMessage: true,
       lastActive: now(),
-      warnedAt: null,
       silent: false,
       timers: { warn: null, reset: null }
     }
@@ -146,7 +138,6 @@ function scheduleInactivity(jid, sock) {
 
   s.timers.warn = setTimeout(async () => {
     if (!sessions[jid] || now() - sessions[jid].lastActive < 5 * 60 * 1000) return
-    sessions[jid].warnedAt = now()
     await sock.sendMessage(jid, {
       text: '⚠️ Você está inativo há um tempo. A sessão será reiniciada em 5 minutos se não houver resposta.'
     })
@@ -156,11 +147,10 @@ function scheduleInactivity(jid, sock) {
     if (!sessions[jid]) return
     if (now() - sessions[jid].lastActive < 10 * 60 * 1000) return
     await sock.sendMessage(jid, {
-      text: '⏳ Sessão reiniciada por inatividade. Digite qualquer coisa para voltar ao menu inicial.'
+      text: '⏳ Sessão reiniciada por inatividade. Digite qualquer coisa para receber novamente o atendimento.'
     })
-    sessions[jid].menu = 'Inicio'
     sessions[jid].silent = false
-    sessions[jid].warnedAt = null
+    sessions[jid].firstMessage = true
     sessions[jid].lastActive = now()
     clearTimers(jid)
   }, resetDelay)
@@ -198,7 +188,6 @@ async function startWA() {
       const isGroup = jid.endsWith('@g.us')
       const num = jid.replace(/@.*$/, '')
 
-      // Verificações de settings
       if ((isGroup && !settings.allowGroups) || settings.blockedNumbers.includes(num)) {
         logger.info(`Ignorando mensagem de ${jid} devido às configurações.`)
         return
@@ -208,41 +197,24 @@ async function startWA() {
       s.lastActive = now()
       scheduleInactivity(jid, sock)
 
-      if (text === '0' || text.toLowerCase() === 'inicio') {
-        s.menu = 'Inicio'
-        s.silent = false
-        await sendMenu(sock, jid, 'Inicio')
-        continue
-      }
-
       if (s.silent) continue
 
-      const currentMenu = menus[s.menu] || menus['Inicio']
-      const option = currentMenu.opcoes[text]
-
-      if (!option) {
+      if (s.firstMessage) {
+        // ✅ Mensagem inicial
         await sock.sendMessage(jid, {
-          text: 'Opção inválida. Digite um número válido ou 0 para voltar ao menu inicial.'
+          text: `Olá seja Bem vindo ao atendimento *CG AGRO* 🌿\n\nQual tipo de produto você está procurando hoje? Fale o que você está buscando e logo um de nossos atendentes irá responder.`
         })
-        continue
-      }
 
-      if (option.tipo === 'menu') {
-        const destino = option.destino
-        if (!menus[destino]) {
-          await sock.sendMessage(jid, { text: 'Ops! Menu indisponível. Voltando ao início.' })
-          s.menu = 'Inicio'
-          await sendMenu(sock, jid, 'Inicio')
-          continue
-        }
-        s.menu = destino
-        await sendMenu(sock, jid, destino)
-      } else if (option.tipo === 'resposta') {
-        // ✅ Primeiro envia, depois entra em modo silencioso
-        if (option.texto) await sock.sendMessage(jid, { text: option.texto })
-        if (option['non-response'] === true) {
-          s.silent = true
-        }
+        // ✅ Envia imagem + vídeos
+        await sock.sendMessage(jid, { 
+          image: { url: 'https://png.pngtree.com/png-clipart/20240512/original/pngtree-free-ophthalmologist-doing-eye-test-with-machine-png-image_15072359.png' }, 
+          caption: 'Seja bem-vindo ao CG AGRO 🌿'
+        })
+        await sock.sendMessage(jid, { video: { url: 'https://videos.pexels.com/video-files/8196796/8196796-hd_1920_1080_25fps.mp4' } })
+        await sock.sendMessage(jid, { video: { url: 'https://videos.pexels.com/video-files/8196796/8196796-hd_1920_1080_25fps.mp4' } })
+
+        s.firstMessage = false
+        s.silent = true
       }
     }
   })
