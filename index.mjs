@@ -200,18 +200,10 @@ async function startWA() {
       if (s.silent) continue
 
       if (s.firstMessage) {
-        // ✅ Mensagem inicial
+        // ✅ Mensagem inicial simples
         await sock.sendMessage(jid, {
           text: `Olá seja Bem vindo ao atendimento *CG AGRO* 🌿\n\nQual tipo de produto você está procurando hoje? Fale o que você está buscando e logo um de nossos atendentes irá responder.`
         })
-
-        // ✅ Envia imagem + vídeos
-        await sock.sendMessage(jid, { 
-          image: { url: 'https://png.pngtree.com/png-clipart/20240512/original/pngtree-free-ophthalmologist-doing-eye-test-with-machine-png-image_15072359.png' }, 
-          caption: 'Seja bem-vindo ao CG AGRO 🌿'
-        })
-        await sock.sendMessage(jid, { video: { url: 'https://videos.pexels.com/video-files/8196796/8196796-hd_1920_1080_25fps.mp4' } })
-        await sock.sendMessage(jid, { video: { url: 'https://videos.pexels.com/video-files/8196796/8196796-hd_1920_1080_25fps.mp4' } })
 
         s.firstMessage = false
         s.silent = true
