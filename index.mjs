@@ -138,17 +138,14 @@ function scheduleInactivity(jid, sock) {
 
   s.timers.warn = setTimeout(async () => {
     if (!sessions[jid] || now() - sessions[jid].lastActive < 5 * 60 * 1000) return
-    await sock.sendMessage(jid, {
+ /*   await sock.sendMessage(jid, {
       text: '⚠️ Você está inativo há um tempo. A sessão será reiniciada em 5 minutos se não houver resposta.'
-    })
+    })*/
   }, warnDelay)
 
   s.timers.reset = setTimeout(async () => {
     if (!sessions[jid]) return
     if (now() - sessions[jid].lastActive < 10 * 60 * 1000) return
-    await sock.sendMessage(jid, {
-      text: '⏳ Sessão reiniciada por inatividade. Digite qualquer coisa para receber novamente o atendimento.'
-    })
     sessions[jid].silent = false
     sessions[jid].firstMessage = true
     sessions[jid].lastActive = now()
