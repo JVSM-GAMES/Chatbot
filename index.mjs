@@ -133,8 +133,8 @@ function scheduleInactivity(jid, sock) {
   if (!s) return
   clearTimers(jid)
   const base = s.lastActive
-  const warnDelay = Math.max(0, base + 5 * 60 * 1000 - now())
-  const resetDelay = Math.max(0, base + 10 * 60 * 1000 - now())
+  const warnDelay = Math.max(0, base + 24 * 60 * 60 * 1000 - now())
+  const resetDelay = Math.max(0, base + 48 * 60 * 60 * 1000 - now())
 
   s.timers.warn = setTimeout(async () => {
     if (!sessions[jid] || now() - sessions[jid].lastActive < 5 * 60 * 1000) return
